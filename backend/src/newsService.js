@@ -1,145 +1,125 @@
-import Parser from 'rss-parser';
 import Anthropic from '@anthropic-ai/sdk';
-import { RSS_FEEDS } from './rssFeeds.js';
-import { insertArticles, getLatestFetchDate } from './db.js';
+import { insertArticles } from './db.js';
 import crypto from 'crypto';
-
-const rssParser = new Parser({
-  timeout: 10000,
-  headers: { 'User-Agent': 'Slide-NewsApp/1.0' },
-});
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// Fetch raw items from all RSS feeds for a given category or all
-async function fetchRssItems(feeds) {
-  const results = [];
-  await Promise.allSettled(
-    feeds.map(async (feed) => {
-      try {
-        const parsed = await rssParser.parseURL(feed.url);
-        const items = (parsed.items || []).slice(0, 8).map((item) => ({
-          title: item.title?.trim() ?? '',
-          description: item.contentSnippet?.trim() ?? item.summary?.trim() ?? '',
-          link: item.link ?? item.guid ?? '',
-          pubDate: item.pubDate ?? item.isoDate ?? new Date().toISOString(),
-          sourceName: feed.name,
-          category: feed.category,
-        }));
-        results.push(...items);
-      } catch (err) {
-        console.warn(`[RSS] Failed to fetch ${feed.name}: ${err.message}`);
-      }
-    })
-  );
-  return results;
-}
+const CATEGORY_QUERIES = {
+  politik: {
+    label: 'Globale Politik',
+    query: 'top global political news today: elections, conflicts, diplomacy, international relations',
+  },
+  wirtschaft: {
+    label: 'Wirtschaft',
+    query: 'top economic and business news today: markets, companies, trade, economy',
+  },
+  tech: {
+    label: 'Tech & AI',
+    query: 'top technology and AI news today: artificial intelligence, startups, science breakthroughs, software',
+  },
+  faszinierend: {
+    label: 'Faszinierend',
+    query: 'fascinating science and nature news today: discoveries, space, biology, surprising facts, mind-blowing findings',
+  },
+  fun: {
+    label: 'Fun & Kurios',
+    query: 'funny quirky surprising uplifting news today: unusual events, unexpected records, feel-good stories',
+  },
+};
 
-// Ask Claude to filter, summarize, and enrich the raw items
-async function enrichWithClaude(rawItems, category) {
-  if (rawItems.length === 0) return [];
+// Use Claude with web_search to find and summarize news for a category
+async function fetchCategoryWithWebSearch(cat, config) {
+  const today = new Date().toLocaleDateString('de-DE', {
+    day: 'numeric', month: 'long', year: 'numeric',
+  });
 
-  const itemsText = rawItems
-    .slice(0, 40)
-    .map(
-      (item, i) =>
-        `[${i}] SOURCE: ${item.sourceName} | CATEGORY: ${item.category}\nTITLE: ${item.title}\nSNIPPET: ${item.description.substring(0, 300)}\nURL: ${item.link}`
-    )
-    .join('\n\n---\n\n');
+  const prompt = `Du bist der Redaktions-KI für "Slide" - eine Premium News App für neugierige, intelligente Leser. Heute ist der ${today}.
 
-  const categoryInstructions = {
-    all: 'Mix of all topics',
-    politik: 'Global politics, international relations, elections, conflicts',
-    wirtschaft: 'Global economy, markets, companies, trade',
-    tech: 'Technology, AI, startups, science breakthroughs',
-    faszinierend: 'Fascinating science, nature, discoveries, mind-blowing facts',
-    fun: 'Amusing, quirky, surprising, feel-good stories',
-  };
+Suche nach den wichtigsten und interessantesten aktuellen Nachrichten zum Thema: ${config.query}
 
-  const prompt = `You are the editorial AI for "Slide" - a premium news app for curious, intelligent readers.
+Wähle die TOP 8 Geschichten aus und gib sie als JSON Array zurück.
 
-Below are raw RSS feed items (category focus: ${categoryInstructions[category] || 'all topics'}).
+Für jede Geschichte:
+- "title": Packende deutsche Schlagzeile (max 80 Zeichen) - direkt, klar, keine Clickbait-Floskeln
+- "summary": 2-3 Sätze auf Deutsch: Was ist passiert? Welche Fakten sind wichtig?
+- "why_it_matters": Ein prägnanter deutscher Satz: Warum ist das relevant? Was ist das große Bild?
+- "source_name": Name der Quelle (z.B. "Reuters", "BBC", "The Guardian")
+- "source_url": URL des Originalartikels (falls verfügbar)
+- "image_keyword": 1-2 englische Wörter als visuelles Konzept (z.B. "parliament", "rocket", "stock market")
+- "category": "${cat}"
 
-Your task: Select the TOP 10 most newsworthy, interesting, or surprising items and return them as a JSON array.
-
-For each selected item, provide:
-- "index": the original [index] number
-- "title": A punchy, engaging German headline (max 80 chars). Rewrite if needed to be compelling.
-- "summary": 2-3 sentences in German explaining what happened and the key facts.
-- "why_it_matters": One crisp German sentence: why should readers care? What's the bigger picture?
-- "image_keyword": 1-2 English words describing a visual concept for this story (for background imagery)
-- "category": one of: politik, wirtschaft, tech, faszinierend, fun
-
-Rules:
-- Prefer stories with broad relevance or surprising angles
-- Skip pure clickbait, duplicates, or purely local stories with no global angle
-- Be concise and direct - no filler language
-- Output ONLY valid JSON array, no markdown, no explanation
-
-RSS ITEMS:
-${itemsText}`;
+Regeln:
+- Nur real existierende, aktuelle Nachrichten - keine erfundenen Geschichten
+- Bevorzuge Geschichten mit überregionaler Relevanz
+- Keine Duplikate, kein reines Clickbait
+- Antworte NUR mit dem JSON Array, kein Markdown, keine Erklärung`;
 
   try {
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 4096,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
       messages: [{ role: 'user', content: prompt }],
     });
 
-    const text = message.content[0].text.trim();
-    // Strip markdown code blocks if present
-    const jsonText = text.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
-    const enriched = JSON.parse(jsonText);
+    // Extract the final text response (after tool use)
+    const textBlock = message.content.find((b) => b.type === 'text');
+    if (!textBlock) {
+      console.warn(`[Claude] No text response for ${cat}`);
+      return [];
+    }
 
-    return enriched.map((item) => {
-      const original = rawItems[item.index] ?? rawItems[0];
-      return {
-        title: item.title ?? original.title,
-        summary: item.summary ?? '',
-        why_it_matters: item.why_it_matters ?? '',
-        category: item.category ?? original.category,
-        source_name: original.sourceName,
-        source_url: original.link,
-        image_keyword: item.image_keyword ?? 'news',
-        fetched_at: new Date().toISOString().split('T')[0],
-        published_date: original.pubDate,
-        external_id: crypto
-          .createHash('md5')
-          .update(original.link + original.title)
-          .digest('hex'),
-      };
-    });
+    const jsonText = textBlock.text.trim()
+      .replace(/^```json\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+
+    const articles = JSON.parse(jsonText);
+
+    return articles.map((item) => ({
+      title: item.title ?? '',
+      summary: item.summary ?? '',
+      why_it_matters: item.why_it_matters ?? '',
+      category: cat,
+      source_name: item.source_name ?? 'Slide',
+      source_url: item.source_url ?? '',
+      image_keyword: item.image_keyword ?? 'news',
+      fetched_at: new Date().toISOString().split('T')[0],
+      published_date: new Date().toISOString(),
+      external_id: crypto
+        .createHash('md5')
+        .update(cat + item.title + new Date().toISOString().split('T')[0])
+        .digest('hex'),
+    }));
   } catch (err) {
-    console.error('[Claude] Enrichment failed:', err.message);
+    console.error(`[Claude] Failed for ${cat}:`, err.message);
     return [];
   }
 }
 
 // Main refresh function - called by cron or on-demand
 export async function refreshNews() {
-  console.log('[NewsService] Starting news refresh...');
+  console.log('[NewsService] Starting news refresh via Claude web search...');
   const startTime = Date.now();
 
-  // Group feeds by category and process in parallel
-  const categories = ['politik', 'wirtschaft', 'tech', 'faszinierend', 'fun'];
+  const categories = Object.entries(CATEGORY_QUERIES);
   const allArticles = [];
 
-  await Promise.allSettled(
-    categories.map(async (cat) => {
-      const feeds = RSS_FEEDS.filter((f) => f.category === cat);
-      const raw = await fetchRssItems(feeds);
-      console.log(`[RSS] ${cat}: fetched ${raw.length} raw items`);
-      const enriched = await enrichWithClaude(raw, cat);
-      console.log(`[Claude] ${cat}: enriched ${enriched.length} articles`);
-      allArticles.push(...enriched);
-    })
-  );
+  // Process sequentially to avoid rate limits
+  for (const [cat, config] of categories) {
+    console.log(`[Claude] Fetching ${config.label}...`);
+    const articles = await fetchCategoryWithWebSearch(cat, config);
+    console.log(`[Claude] ${cat}: got ${articles.length} articles`);
+    allArticles.push(...articles);
+  }
 
   if (allArticles.length > 0) {
     insertArticles(allArticles);
     console.log(
       `[NewsService] Done. Inserted ${allArticles.length} articles in ${((Date.now() - startTime) / 1000).toFixed(1)}s`
     );
+  } else {
+    console.warn('[NewsService] No articles fetched - check API key and web_search availability');
   }
 
   return allArticles.length;
