@@ -1,6 +1,11 @@
 {
-  "framework": "nextjs",
-  "installCommand": "cd luis-daily-brief && npm ci",
-  "buildCommand": "cd luis-daily-brief && npm run build",
-  "outputDirectory": "luis-daily-brief/.next"
+  "builds": [
+    {
+      "src": "luis-daily-brief/package.json",
+      "use": "@vercel/next"
+    }
+  ],
+  "routes": [
+    { "src": "/(.*)", "dest": "luis-daily-brief/$1" }
+  ]
 }
