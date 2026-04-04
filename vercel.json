@@ -1,6 +1,6 @@
 {
   "framework": "nextjs",
-  "buildCommand": "cd luis-daily-brief && npm install && npm run build",
-  "installCommand": "cd luis-daily-brief && npm install",
+  "installCommand": "cd luis-daily-brief && npm ci",
+  "buildCommand": "cd luis-daily-brief && npm run build",
   "outputDirectory": "luis-daily-brief/.next"
 }
