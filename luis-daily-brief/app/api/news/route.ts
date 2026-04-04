@@ -2,6 +2,9 @@ import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
 import type { NewsBrief } from '@/types/news';
 
+// Vercel: allow up to 60s for Claude + web_search
+export const maxDuration = 60;
+
 // ── In-memory cache ──────────────────────────────────────────────────────────
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -17,7 +20,12 @@ function setCache(data: NewsBrief) {
 }
 
 // ── System prompt ─────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `Du bist ein persönlicher News-Kurator für Luis, 30 Jahre alt, Senior Consultant bei einer Top-Unternehmensberatung in München. Sein Fokus liegt auf Automotive-Industrie, KI-Disruption, europäischer Politik und Makro-Trends. Priorisiere Nachrichten der letzten 24 Stunden, die für ihn beruflich und persönlich relevant sind. Antworte NUR mit validem JSON, kein Markdown, keine Erklärungen.`;
+const SYSTEM_PROMPT =
+  'Du bist ein persönlicher News-Kurator für Luis, 30 Jahre alt, ' +
+  'Senior Consultant bei einer Top-Unternehmensberatung in München. ' +
+  'Sein Fokus liegt auf Automotive-Industrie, KI-Disruption, europäischer Politik und Makro-Trends. ' +
+  'Priorisiere Nachrichten der letzten 24 Stunden, die für ihn beruflich und persönlich relevant sind. ' +
+  'Antworte NUR mit validem JSON, kein Markdown, keine Erklärungen.';
 
 // ── User prompt ───────────────────────────────────────────────────────────────
 function buildPrompt(): string {
@@ -29,151 +37,68 @@ function buildPrompt(): string {
   });
   const isoNow = new Date().toISOString();
 
-  return `Heute ist ${today}. Suche nach den wichtigsten Nachrichten der letzten 24 Stunden und erstelle einen vollständigen News-Brief mit genau den folgenden 5 Kategorien, jeweils 3-4 Stories.
+  return `Heute ist ${today}. Suche nach den wichtigsten Nachrichten der letzten 24 Stunden und erstelle einen vollständigen News-Brief mit genau 5 Kategorien (je 3-4 Stories).
 
-Kategorien und ihre Schwerpunkte:
+Kategorien:
 1. wirtschaft – Deutsche & europäische Wirtschaft, DAX, Märkte, OEMs, Unternehmensberatung, M&A
 2. politik – Deutsche Innenpolitik, EU-Politik, Geopolitik (USA, China, Naher Osten)
 3. international – Globale Ereignisse, die ein Strategy Consultant in München kennen sollte
 4. tech_ai – KI-Modelle, Big Tech, Startups, Automatisierung, Zukunft der Arbeit
-5. fun_trends – Gen-Z-Kultur, virale Momente, neue Apps/Produkte, Lifestyle-Trends, Interessantes
+5. fun_trends – Gen-Z-Kultur, virale Momente, neue Apps/Produkte, Lifestyle-Trends
 
-Antworte NUR mit diesem JSON-Objekt (kein Markdown, keine Erklärungen, kein Text davor oder danach):
-{
-  "generated_at": "${isoNow}",
-  "categories": [
-    {
-      "id": "wirtschaft",
-      "label": "Wirtschaft",
-      "emoji": "📈",
-      "stories": [
-        {
-          "title": "Titel auf Deutsch (max 90 Zeichen)",
-          "summary": "2-3 Sätze auf Deutsch mit den wichtigsten Fakten.",
-          "why_it_matters": "1 Satz – Relevanz für einen Strategy Consultant in München.",
-          "sentiment": "positive",
-          "source": "Quellenname",
-          "url": "https://...",
-          "read_time_seconds": 45
-        }
-      ]
-    },
-    {
-      "id": "politik",
-      "label": "Politik",
-      "emoji": "🏛️",
-      "stories": []
-    },
-    {
-      "id": "international",
-      "label": "International",
-      "emoji": "🌍",
-      "stories": []
-    },
-    {
-      "id": "tech_ai",
-      "label": "Tech & AI",
-      "emoji": "🤖",
-      "stories": []
-    },
-    {
-      "id": "fun_trends",
-      "label": "Fun & Trends",
-      "emoji": "✨",
-      "stories": []
-    }
-  ]
-}
+Antworte NUR mit diesem JSON (kein Markdown, kein Text davor/danach):
+{"generated_at":"${isoNow}","categories":[{"id":"wirtschaft","label":"Wirtschaft","emoji":"📈","stories":[{"title":"...","summary":"2-3 Sätze auf Deutsch.","why_it_matters":"1 Satz Relevanz für Strategy Consultant.","sentiment":"positive","source":"Reuters","url":"https://...","read_time_seconds":45}]},{"id":"politik","label":"Politik","emoji":"🏛️","stories":[]},{"id":"international","label":"International","emoji":"🌍","stories":[]},{"id":"tech_ai","label":"Tech & AI","emoji":"🤖","stories":[]},{"id":"fun_trends","label":"Fun & Trends","emoji":"✨","stories":[]}]}
 
 Regeln:
-- sentiment muss exakt "positive", "neutral" oder "negative" sein
-- read_time_seconds: realistischer Wert zwischen 30 und 120
-- Nur reale, aktuelle Nachrichten der letzten 24 Stunden
-- URLs zu echten Quellen (Reuters, BBC, FAZ, Spiegel, FT, Bloomberg, etc.)
-- Für jede Kategorie genau 3-4 Stories
-- generated_at: "${isoNow}"`;
+- sentiment: exakt "positive", "neutral" oder "negative"
+- read_time_seconds: 30-120
+- Nur reale Nachrichten der letzten 24 Stunden
+- Je Kategorie 3-4 Stories
+- generated_at muss "${isoNow}" sein`;
 }
 
-// ── Agentic loop to handle web_search tool calls ──────────────────────────────
+// ── Single-call fetch (web_search_20250305 is server-side at Anthropic) ───────
 async function fetchBriefFromClaude(): Promise<NewsBrief> {
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-  type MessageParam = Anthropic.MessageParam;
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 16000,
+    system: SYSTEM_PROMPT,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    tools: [{ type: 'web_search_20250305', name: 'web_search' }] as any,
+    messages: [{ role: 'user', content: buildPrompt() }],
+  });
 
-  const messages: MessageParam[] = [
-    { role: 'user', content: buildPrompt() },
-  ];
-
-  const MAX_ROUNDS = 8;
-
-  for (let round = 0; round < MAX_ROUNDS; round++) {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 8192,
-      system: SYSTEM_PROMPT,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      tools: [{ type: 'web_search_20250305', name: 'web_search' }] as any,
-      messages,
-    });
-
-    // Collect any text blocks from this response
-    const textBlocks = response.content.filter((b) => b.type === 'text');
-
-    if (response.stop_reason === 'end_turn' || response.stop_reason === 'stop_sequence') {
-      // Parse final JSON from the last text block
-      for (const block of textBlocks.reverse()) {
-        const text = (block as Anthropic.TextBlock).text.trim();
-        const parsed = extractJSON(text);
-        if (parsed) return parsed;
-      }
-      throw new Error('No valid JSON found in Claude response');
-    }
-
-    if (response.stop_reason === 'tool_use') {
-      // Add assistant's tool-use message to history
-      messages.push({ role: 'assistant', content: response.content });
-
-      // Build tool_result messages for each tool_use block
-      const toolResults: Anthropic.ToolResultBlockParam[] = response.content
-        .filter((b) => b.type === 'tool_use')
-        .map((b) => ({
-          type: 'tool_result' as const,
-          tool_use_id: (b as Anthropic.ToolUseBlock).id,
-          content: '',
-        }));
-
-      messages.push({ role: 'user', content: toolResults });
-      continue;
-    }
-
-    // max_tokens or other stop
-    if (textBlocks.length > 0) {
-      const text = (textBlocks[textBlocks.length - 1] as Anthropic.TextBlock).text.trim();
-      const parsed = extractJSON(text);
-      if (parsed) return parsed;
-    }
-
-    break;
+  // web_search is server-side: Anthropic returns tool_use + tool_result + text in one response
+  const textBlock = response.content.find((b) => b.type === 'text');
+  if (!textBlock) {
+    console.error('[API /news] No text block. stop_reason:', response.stop_reason, 'content types:', response.content.map(b => b.type));
+    throw new Error(`Claude returned no text (stop_reason: ${response.stop_reason})`);
   }
 
-  throw new Error('Max rounds reached without valid JSON response');
+  const text = (textBlock as Anthropic.TextBlock).text.trim();
+  const parsed = extractJSON(text);
+  if (!parsed) {
+    console.error('[API /news] JSON parse failed. Raw text (first 500):', text.slice(0, 500));
+    throw new Error('Claude response konnte nicht als JSON geparst werden');
+  }
+
+  return parsed;
 }
 
 // ── JSON extractor with fallback ──────────────────────────────────────────────
 function extractJSON(text: string): NewsBrief | null {
-  // Strip markdown code fences if present
   const cleaned = text
     .replace(/^```(?:json)?\s*/im, '')
     .replace(/\s*```$/im, '')
     .trim();
 
-  // Try full parse
   try {
     const parsed = JSON.parse(cleaned);
     if (isValidBrief(parsed)) return parsed;
   } catch {}
 
-  // Find the outermost JSON object
   const start = cleaned.indexOf('{');
   const end = cleaned.lastIndexOf('}');
   if (start !== -1 && end > start) {
@@ -201,34 +126,29 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const forceRefresh = searchParams.get('refresh') === '1';
 
-  // Return cached response if available
   if (!forceRefresh) {
     const cached = getCached();
     if (cached) {
       return NextResponse.json(cached, {
-        headers: { 'X-Cache': 'HIT', 'X-Cache-Expires': new Date(cache!.expiresAt).toISOString() },
+        headers: {
+          'X-Cache': 'HIT',
+          'X-Cache-Expires': new Date(cache!.expiresAt).toISOString(),
+        },
       });
     }
   }
 
   if (!process.env.ANTHROPIC_API_KEY) {
-    return NextResponse.json(
-      { error: 'ANTHROPIC_API_KEY not configured' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'ANTHROPIC_API_KEY not configured' }, { status: 500 });
   }
 
   try {
     const brief = await fetchBriefFromClaude();
     setCache(brief);
-    return NextResponse.json(brief, {
-      headers: { 'X-Cache': 'MISS' },
-    });
+    return NextResponse.json(brief, { headers: { 'X-Cache': 'MISS' } });
   } catch (err) {
-    console.error('[API /news] Error:', err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Failed to fetch news' },
-      { status: 500 }
-    );
+    const message = err instanceof Error ? err.message : 'Unbekannter Fehler';
+    console.error('[API /news] Error:', message);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
