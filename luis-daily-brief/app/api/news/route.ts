@@ -37,24 +37,32 @@ function buildPrompt(): string {
   });
   const isoNow = new Date().toISOString();
 
-  return `Heute ist ${today}. Suche nach den wichtigsten Nachrichten der letzten 24 Stunden und erstelle einen vollständigen News-Brief mit genau 5 Kategorien (je 3-4 Stories).
+  return `Heute ist ${today}.
 
-Kategorien:
+Nutze web_search um für JEDE der folgenden 5 Kategorien 3-4 aktuelle Nachrichten der letzten 24 Stunden zu finden. Suche aktiv nach echten News – gib keine leeren Arrays zurück.
+
+Kategorien (alle 5 MÜSSEN befüllt sein):
 1. wirtschaft – Deutsche & europäische Wirtschaft, DAX, Märkte, OEMs, Unternehmensberatung, M&A
 2. politik – Deutsche Innenpolitik, EU-Politik, Geopolitik (USA, China, Naher Osten)
 3. international – Globale Ereignisse, die ein Strategy Consultant in München kennen sollte
 4. tech_ai – KI-Modelle, Big Tech, Startups, Automatisierung, Zukunft der Arbeit
 5. fun_trends – Gen-Z-Kultur, virale Momente, neue Apps/Produkte, Lifestyle-Trends
 
-Antworte NUR mit diesem JSON (kein Markdown, kein Text davor/danach):
-{"generated_at":"${isoNow}","categories":[{"id":"wirtschaft","label":"Wirtschaft","emoji":"📈","stories":[{"title":"...","summary":"2-3 Sätze auf Deutsch.","why_it_matters":"1 Satz Relevanz für Strategy Consultant.","sentiment":"positive","source":"Reuters","url":"https://...","read_time_seconds":45}]},{"id":"politik","label":"Politik","emoji":"🏛️","stories":[]},{"id":"international","label":"International","emoji":"🌍","stories":[]},{"id":"tech_ai","label":"Tech & AI","emoji":"🤖","stories":[]},{"id":"fun_trends","label":"Fun & Trends","emoji":"✨","stories":[]}]}
+Antworte NUR mit validem JSON ohne Markdown. Pflichtformat für jede Story:
+{
+  "title": "Schlagzeile auf Deutsch",
+  "summary": "2-3 Sätze mit den wichtigsten Fakten auf Deutsch.",
+  "why_it_matters": "1 Satz warum das für einen Strategy Consultant relevant ist.",
+  "sentiment": "positive",
+  "source": "Quellenname (z.B. Reuters, FAZ, FT)",
+  "url": "https://echte-url.de/artikel",
+  "read_time_seconds": 45
+}
 
-Regeln:
-- sentiment: exakt "positive", "neutral" oder "negative"
-- read_time_seconds: 30-120
-- Nur reale Nachrichten der letzten 24 Stunden
-- Je Kategorie 3-4 Stories
-- generated_at muss "${isoNow}" sein`;
+Pflicht-JSON-Struktur (generated_at = "${isoNow}"):
+{"generated_at":"${isoNow}","categories":[{"id":"wirtschaft","label":"Wirtschaft","emoji":"📈","stories":[HIER_3_BIS_4_ECHTE_STORIES]},{"id":"politik","label":"Politik","emoji":"🏛️","stories":[HIER_3_BIS_4_ECHTE_STORIES]},{"id":"international","label":"International","emoji":"🌍","stories":[HIER_3_BIS_4_ECHTE_STORIES]},{"id":"tech_ai","label":"Tech & AI","emoji":"🤖","stories":[HIER_3_BIS_4_ECHTE_STORIES]},{"id":"fun_trends","label":"Fun & Trends","emoji":"✨","stories":[HIER_3_BIS_4_ECHTE_STORIES]}]}
+
+WICHTIG: sentiment muss exakt "positive", "neutral" oder "negative" sein. Keine leeren stories-Arrays!`;
 }
 
 // ── Single-call fetch (web_search_20250305 is server-side at Anthropic) ───────
