@@ -3,10 +3,7 @@ import { NextResponse } from 'next/server';
 import type { NewsBrief, Category, Story } from '@/types/news';
 
 export const maxDuration = 60;
-
-// CDN-level cache: Vercel serves this from edge for 30 minutes.
-// Prevents redundant Lambda invocations entirely.
-export const revalidate = 1800;
+export const dynamic = 'force-dynamic'; // never cache at CDN/edge
 
 // ── Category definitions ──────────────────────────────────────────────────────
 const CATEGORIES = [
@@ -90,10 +87,7 @@ export async function GET() {
   try {
     const brief = await fetchBrief();
     return NextResponse.json(brief, {
-      headers: {
-        // Let Vercel CDN cache this for 30 min; clients can keep for 5 min
-        'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=300',
-      },
+      headers: { 'Cache-Control': 'no-store' },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unbekannter Fehler';
