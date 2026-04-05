@@ -4,10 +4,14 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { NewsBrief, FetchStatus } from '@/types/news';
 
 const STORAGE_KEY = 'luis-brief-cache';
-const CACHE_TTL_MS = 30 * 60 * 1000;      // 30 min localStorage cache
-const REFRESH_COOLDOWN_MS = 5 * 60 * 1000; // 5 min cooldown on manual refresh
+const CACHE_TTL_MS = 30 * 60 * 1000;
+const REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
 
 interface StoredBrief { data: NewsBrief; savedAt: number }
+
+function hasStories(brief: NewsBrief): boolean {
+  return brief.categories.some((c) => c.stories.length > 0);
+}
 
 function readStorage(): StoredBrief | null {
   try {
@@ -15,11 +19,13 @@ function readStorage(): StoredBrief | null {
     if (!raw) return null;
     const parsed: StoredBrief = JSON.parse(raw);
     if (Date.now() - parsed.savedAt > CACHE_TTL_MS) return null;
+    if (!hasStories(parsed.data)) return null; // discard empty cached results
     return parsed;
   } catch { return null; }
 }
 
 function writeStorage(data: NewsBrief) {
+  if (!hasStories(data)) return; // never cache empty results
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ data, savedAt: Date.now() }));
   } catch {}
@@ -45,8 +51,8 @@ export function useNews(): UseNewsResult {
   const abortRef = useRef<AbortController | null>(null);
 
   const fetchNews = useCallback(async (forceRefresh = false) => {
-    // Enforce cooldown on manual refresh
-    if (forceRefresh) {
+    // Only enforce cooldown if we actually have stories to show
+    if (forceRefresh && brief && hasStories(brief)) {
       const elapsed = Date.now() - lastRefreshRef.current;
       if (elapsed < REFRESH_COOLDOWN_MS) {
         setCooldownSeconds(Math.ceil((REFRESH_COOLDOWN_MS - elapsed) / 1000));
@@ -54,12 +60,13 @@ export function useNews(): UseNewsResult {
       }
     }
 
-    // Serve from localStorage if data is fresh enough
+    // Serve fresh data from localStorage if available
     if (!forceRefresh) {
       const stored = readStorage();
       if (stored) {
         setBrief(stored.data);
         setStatus('success');
+        lastRefreshRef.current = Date.now();
         return;
       }
     }
@@ -80,10 +87,14 @@ export function useNews(): UseNewsResult {
         throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
       }
       const data: NewsBrief = await res.json();
-      writeStorage(data);
       setBrief(data);
       setStatus('success');
-      lastRefreshRef.current = Date.now();
+
+      // Only cache + set cooldown if we got real stories
+      if (hasStories(data)) {
+        writeStorage(data);
+        lastRefreshRef.current = Date.now();
+      }
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
       setError(err instanceof Error ? err.message : 'Unbekannter Fehler');
@@ -93,7 +104,7 @@ export function useNews(): UseNewsResult {
     }
   }, [brief]);
 
-  // Cooldown countdown timer
+  // Cooldown countdown
   useEffect(() => {
     if (!cooldownSeconds || cooldownSeconds <= 0) { setCooldownSeconds(null); return; }
     const t = setTimeout(() => setCooldownSeconds((s) => (s && s > 1 ? s - 1 : null)), 1000);
