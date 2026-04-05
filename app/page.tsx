@@ -6,7 +6,7 @@ import NewsFeed from '@/components/NewsFeed';
 import { LoadingState, ErrorState } from '@/components/LoadingState';
 
 export default function HomePage() {
-  const { brief, status, error, generatedAt, refresh, isRefreshing } = useNews();
+  const { brief, status, error, generatedAt, refresh, isRefreshing, cooldownSeconds } = useNews();
 
   const isLoading = status === 'loading';
 
@@ -26,6 +26,7 @@ export default function HomePage() {
         generatedAt={generatedAt}
         onRefresh={refresh}
         isRefreshing={isLoading || isRefreshing}
+        cooldownSeconds={cooldownSeconds}
       />
 
       {/* Error toast – shown on top of existing content */}
