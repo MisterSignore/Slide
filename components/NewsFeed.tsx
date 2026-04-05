@@ -15,7 +15,6 @@ export default function NewsFeed({ brief }: NewsFeedProps) {
 
   const visibleStories = useMemo(() => {
     if (activeId === 'all') {
-      // Interleave stories from all categories for a mixed feed
       return brief.categories.flatMap((cat) =>
         cat.stories.map((story) => ({ story, cat }))
       );
@@ -26,12 +25,11 @@ export default function NewsFeed({ brief }: NewsFeedProps) {
   }, [brief, activeId]);
 
   const activeCategory = brief.categories.find((c) => c.id === activeId);
-  const activeLabel = activeCategory?.label ?? 'Alle';
 
   return (
-    <div className="flex flex-col min-h-full">
-      {/* Category tabs */}
-      <div className="sticky top-[64px] z-40 bg-navy/80 backdrop-blur-xl border-b border-white/5 py-2">
+    <>
+      {/* Fixed category bar — sits right below the fixed header */}
+      <div className="fixed top-[68px] left-0 right-0 z-40 bg-navy/85 backdrop-blur-xl border-b border-white/5">
         <CategoryBar
           categories={brief.categories}
           activeId={activeId}
@@ -39,32 +37,38 @@ export default function NewsFeed({ brief }: NewsFeedProps) {
         />
       </div>
 
-      {/* Story count */}
-      <div className="px-4 pt-4 pb-2">
-        <p className="text-[11px] text-slate-500 font-medium">
-          {visibleStories.length} {visibleStories.length === 1 ? 'Story' : 'Stories'}
-          {activeId !== 'all' && activeCategory && (
-            <span> · {activeCategory.emoji} {activeCategory.label}</span>
+      {/* Story list */}
+      <div className="px-4 pb-10">
+        {/* Count */}
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-[11px] text-slate-500 font-medium">
+            {visibleStories.length} {visibleStories.length === 1 ? 'Story' : 'Stories'}
+            {activeId !== 'all' && activeCategory && (
+              <> · {activeCategory.emoji} {activeCategory.label}</>
+            )}
+          </span>
+          {activeId === 'all' && (
+            <span className="ml-auto text-[10px] text-slate-600">← scrolle durch alle Kategorien</span>
           )}
-        </p>
-      </div>
-
-      {/* Stories */}
-      {visibleStories.length === 0 ? (
-        <EmptyState label={activeLabel} />
-      ) : (
-        <div className="px-4 pb-8 space-y-3">
-          {visibleStories.map(({ story, cat }, i) => (
-            <NewsCard
-              key={`${cat.id}-${i}`}
-              story={story}
-              index={i}
-              categoryEmoji={cat.emoji}
-              categoryLabel={cat.label}
-            />
-          ))}
         </div>
-      )}
-    </div>
+
+        {visibleStories.length === 0 ? (
+          <EmptyState label={activeCategory?.label ?? 'Alle'} />
+        ) : (
+          <div className="space-y-3">
+            {visibleStories.map(({ story, cat }, i) => (
+              <NewsCard
+                key={`${cat.id}-${i}`}
+                story={story}
+                index={i}
+                categoryId={cat.id}
+                categoryEmoji={cat.emoji}
+                categoryLabel={cat.label}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
